@@ -1,0 +1,209 @@
+---
+title: Summary Report
+output: html_document
+runtime: shiny
+---
+```{r setup&library, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r ReadDataFileUI,echo=FALSE}
+fluidRow(
+  column(12,
+         div(id="left",style="display: inline-block; vertical-align: bottom;",
+             fileInput("pro.file", "Protein Data File",
+                       accept = c(
+                         "text/csv",
+                         "text/comma-separated-values,text/plain",
+                         ".csv")
+             )
+         ),
+         div(id="middle",style="display: inline-block; vertical-align: 50px; padding-left: 50px",
+             actionButton("checkProtein","Check Protein File")
+         ),
+         div(id="right", style="display: inline-block; vertical-align: 45px; padding-left: 50px",
+             htmlOutput("pro.file.name")
+        )
+  ),
+  div(id="errorMessage",style="padding-left: 10px",
+    verbatimTextOutput("Pro.Message")
+  )
+)
+
+fluidRow(
+  column(12,
+         div(id="left",style="display: inline-block; vertical-align: bottom;",
+             fileInput("pep.file", "Pepetide Data File",
+                       accept = c(
+                         "text/csv",
+                         "text/comma-separated-values,text/plain",
+                         ".csv")
+             )
+         ),
+         div(id="middle",style="display: inline-block; vertical-align: 50px; padding-left: 50px",
+             actionButton("checkPeptide","Check Peptide File")
+         ),
+         div(id="right", style="display: inline-block; vertical-align: 45px; padding-left: 50px",
+             htmlOutput("pep.file.name")
+        )
+  ),
+  div(id="errorMessage",style="padding-left: 10px",
+    verbatimTextOutput("Pep.Message")
+  )
+)
+
+
+observeEvent(input$checkPeptide,{
+  if(input$checkPeptide==0) return()
+
+  # Flush pep error message
+  glob.var$pep.message <- ""
+  
+  # Lock pep.file input
+  # In case user select another file
+  
+  pep.file <- input$pep.file
+  path <- pep.file$datapath
+  name <- pep.file$name
+
+  if(is.null(path)){
+    glob.var$pep.message <- "ERROR: Please select peptide data file"
+    glob.var$peptide.file.name <- ""
+    return()
+  }
+
+  peptide.data <- read.csv(file=input$pep.file$datapath,
+                           header=T)
+  # Peptide data validation
+  # Validate all mandatory variables exist
+  if(!all(
+    c("Peptide.Sequence","Best.Hit.Delat.Mass..ppm.")
+    %in% names(peptide.data))){
+    glob.var$pep.message<-"ERROR: Mandatory Varaibles Not Found. Please check variable names in peptide data file"
+    glob.var$peptide.file.name <- ""
+    return()
+  }
+  
+  glob.var$pep.message <-"Peptide data file read in successfully."
+  #data manipulation
+  peptide.size <<- nrow(peptide.data)
+  sequ <- peptide.data$Peptide.Sequence
+  ## Internal Miss Cleavage
+  sep.list <- strsplit(toupper(sequ),split="[KR]")
+  occur <<- sapply(sep.list,FUN=length)
+  ## Cleavage specificity
+  speci <<- sapply(toupper(sequ),FUN=function(x){
+    tmp <- substr(x,nchar(x),nchar(x))
+    return(tmp=="K"||tmp=="R")
+  })
+  Delt.Mass <<- peptide.data$Best.Hit.Delat.Mass..ppm.
+  glob.var$peptide.file.name <- name  
+})
+
+observeEvent(input$checkProtein,{
+  if(input$checkProtein==0) return()  
+
+  glob.var$pro.message <- ""  
+  
+  # Lock pep.file input
+  # In case user select another file
+  pro.file <- input$pro.file
+  path <- pro.file$datapath
+  name <- pro.file$name
+  
+  if(is.null(path)){
+    glob.var$pro.message <- "ERROR: Please select protein data file"
+    glob.var$protein.file.name <- ""
+    return()
+  }
+
+  protein.data <<- read.csv(file=path,
+                           header=TRUE, stringsAsFactors = FALSE)
+  
+  ## Raw Data Validation
+  sample.indices <- grep("Spectrum_Count_",names(protein.data))
+  ## Check if we can find sample in data by sample names
+  if(length(sample.indices)==0){
+    glob.var$pro.message<-"ERROR: Sample Not Found. Please check sample names"
+    glob.var$protein.file.name <- ""
+    return()
+  }
+
+  ## Check if all mandatory variables can be found
+  if(!all(
+    c("Defline","Confidence.1...Local.False.Positive.Rate.","Occurrence","Total.Spectrum.Count")
+    %in% names(protein.data))){
+    glob.var$pro.message<-"ERROR: Varaible Not Found. Please check protein file variable names"
+    glob.var$protein.file.name <- ""
+    return()
+  }
+  
+  ## Sample information
+  sample.size <<- length(sample.indices)
+  sample.full.names <- names(protein.data)[sample.indices]
+  sample.names <<- substr(sample.full.names,16,nchar(sample.full.names))
+  sample.hit.rate <<- sapply(sample.names,FUN=function(x){
+    res <- unlist(strsplit(x,"_"))
+    return(as.numeric(res[length(res)]))
+  })
+  ## Check if all samples have hit rates
+  if(any(is.na(sample.hit.rate))){
+    glob.var$pro.message<-"ERROR: Hit Rate Not Fount. Please include hit rates in sample names"
+    glob.var$protein.file.name <- ""
+    return()
+  }
+  
+  ## Check if hit rate is reasonable
+  if(any(sample.hit.rate<0|sample.hit.rate>100)){
+    glob.var$pro.message<-"ERROR: Invalid Hit Rate. Please check hit rates"
+    glob.var$protein.file.name <- ""
+    return()
+  }
+  protein.names <- protein.data$Defline
+  protein.size <<- length(protein.names)
+  
+  
+  # Creating matrix containing only spectrum count data and hit rate
+  count.data <<- t(protein.data[,sample.indices])
+  sample.total.spectrum.counts <<- rowSums(count.data)
+  colnames(count.data) <<- protein.names
+  rownames(count.data) <<- sample.names
+  # Insert the hit rate at the beginning of data set
+  count.data <<- cbind(sample.hit.rate,count.data)
+  
+  # Sort data by hit rate
+  count.data <<- count.data[order(count.data[,"sample.hit.rate"],decreasing = T),]
+  
+  glob.var$pro.message <-"Protein data file read in successfully."  
+  glob.var$protein.file.name <- name
+})
+
+
+output$Pep.Message <- renderText(glob.var$pep.message)
+output$Pro.Message <- renderText(glob.var$pro.message)
+#output$pro.file.name <- renderText(paste0("Protein File Name: ",glob.var$protein.file.name))
+output$pep.file.name <- renderText(paste0("Peptide File Name: ","<font color= green><b>", glob.var$peptide.file.name, "</b></font>"))
+output$pro.file.name <- renderText(paste0("Protein File Name: ","<font color= green><b>", glob.var$protein.file.name, "</b></font>"))
+
+```
+   
+   
+   
+   
+```{r}
+
+
+fluidRow(
+  column(12,
+         div(id="link",align="center",
+             htmlOutput("link"))
+  )
+)
+
+output$link <- renderText(
+  if(input$checkPeptide!=0 && input$checkProtein!=0 && nchar(glob.var$protein.file.name)>0 && nchar(glob.var$peptide.file.name)>0)
+    paste("Jump to : <font size=\"5\"><a href=\"overview.Rmd\" class=\"uri\"><u>Overview</u></a></font>")
+)
+
+```
+

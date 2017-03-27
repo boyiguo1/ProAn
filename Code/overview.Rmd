@@ -1,0 +1,233 @@
+---
+title: Summary Report
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+runtime: shiny
+---
+[overview.Rmd](overview.Rmd)  
+[filter.Rmd](filter.Rmd)  
+[analysis.Rmd](analysis.Rmd)  
+
+<hr>
+```{r setup&library, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(plotly)
+library(shiny)
+library(DT)
+```
+
+# Overview
+Peptide File Name: `r renderText(glob.var$peptide.file.name)`  
+Protein File Name: `r renderText(glob.var$protein.file.name)`  
+No. of Samples: `r sample.size`  
+No. of Protein Groups: `r protein.size`  
+No. of Pepetide Sequences: `r peptide.size`  
+<hr>
+
+## Peptides
+### Cleavage Specificity
+No. of peptide sequences end with "K" or "R": `r sum(speci)`
+<hr>
+
+### Internal Missed Cleavage
+```{r Internal.Missed.Cleavage}
+tab <- c(table(occur-1))
+miss.clea <- rownames(data.matrix(tab))
+tmp <- cbind(miss.clea,tab)
+colnames(tmp) <- c("Number of Missed Cleavage","Frequency")
+rownames(tmp) <- NULL
+datatable(tmp, options = list(dom = 't'),rownames=FALSE)
+```
+<hr>
+
+### Delta Mass
+```{r Peptide Delta Mass Histogram}
+plot_ly()%>%
+  add_histogram(x=Delt.Mass,showlegend=FALSE)%>%
+  add_lines(x=mean(Delt.Mass),y=c(0,length(Delt.Mass)/10),name=paste("Mean:",round(mean(Delt.Mass),3)))%>%
+  add_lines(x=median(Delt.Mass),y=c(0,length(Delt.Mass)/10),name=paste("Median:",round(median(Delt.Mass),3)))%>%
+  layout(
+    title = "Histogram of Peptide Delta Mass",
+    xaxis=list(title="Delta Mass"),
+    yaxis=list(title="Frequency Count")
+  )
+```
+<hr>
+
+## Protein Groups 
+### Confidence
+```{r Confidence Histogram}
+# Confidence Level Hist
+plot_ly(
+  x=protein.data$Confidence.1...Local.False.Positive.Rate.,
+  type="histogram",autobinx=FALSE,
+  xbins=list(start=0,end=1.05,size=0.05)
+)%>%
+  layout(
+    title = "Histogram of Protein Group Confidence Level",
+    xaxis=list(title="Confidence",range=c(0,1.05)),
+    yaxis=list(title="Frequency Count")
+  )
+```
+<hr>
+
+### Occurence
+```{r Occurence Histogram}
+# Occurence Hist
+fluidRow(
+  h4("Confidence Threshold"),
+  column(3,
+         sliderInput("confi_threshold",label="",
+                     min=0.5,max=1,value=0.8,step=0.05
+         )),
+  column(7,
+         renderText("The slider is to help set up a threshold so that protein groups will be seperated into two groups, the group with confidence level greater than or equal to the threshold and the group with confidence level less than the threshold."
+         )
+  )
+)
+
+renderPlotly({
+  plot_ly(x=factor(protein.data$Occurrence),name="All",type="histogram")%>%
+    add_histogram(
+      x=factor(protein.data[protein.data$Confidence.1...Local.False.Positive.Rate.>=input$confi_threshold,]$Occurrence),
+      name=paste0("Confi >= ",input$confi_threshold))%>%
+    add_histogram(
+      x=factor(protein.data[protein.data$Confidence.1...Local.False.Positive.Rate.<input$confi_threshold,]$Occurrence),
+      name=paste0("Confi < ",input$confi_threshold))%>%
+    layout(
+      title = "Histogram of Protein Group Occurence",
+      xaxis=list(title="Occurrence"),
+      yaxis=list(title="Frequency Count")
+    )
+})
+
+```
+<hr>
+
+### Total Spectrum Count
+#### Summary of Total Spectrum Counts of Protein Groups
+```{r Total.Spectrum.Count}
+summary(protein.data$Total.Spectrum.Count)
+```
+```{r Protein Spectrum Count}
+plot_ly(x=log(protein.data$Total.Spectrum.Count),
+        type="histogram")%>%
+  layout(
+    title = "Histogram of Total Spectrum Counts of Protein Groups",
+    xaxis=list(title="Log(Total Spectrum Count)"),
+    yaxis=list(title="Frequency Count")
+  )
+```
+<hr>
+
+## Samples
+### Overview
+```{r SampleOverview}
+ plot_ly(
+    #text=sample.full.names,
+    #type="scatter",mode="markers"
+  )%>%
+    add_markers(
+      x = sample.hit.rate,
+      y = sample.total.spectrum.counts,
+      hoverinfo = "text", name="Spectrum",
+      text = ~paste("Hit Rate = ", sample.hit.rate,"\n Total  Spectrum Amount= ", sample.total.spectrum.counts)
+    )%>%
+    add_markers(
+      x = count.data[,1],
+      y = rowSums(count.data[,-1]!=0),
+      name = "non-0",yaxis="y2",
+      hoverinfo = "text",
+      text = ~paste("Hit Rate = ", count.data[,1],"\n No. of Protein Groups= ", rowSums(count.data[,-1]!=0))
+    )%>%  
+    layout(
+      title = " Sample Total Spectrum Amounts Vs Sample Hit Rate",
+      xaxis=list(title="Hit Rate"),
+      yaxis=list(title="Total Spectrum Amounts"),
+      yaxis2=list(
+        tickfont = list(color = "red"),
+        overlaying = "y",
+        side = "right",
+        title = "No. of Protein Groups"
+      )
+    )
+```
+<hr>  
+
+### Sample Spectrum Amouts
+```{r SampleSpectrumAmounts}
+plot_ly(x=rownames(count.data),y=rowSums(count.data[,-1]),type="bar")%>%
+  layout(title="Histogram of Sample Spectrum Amount",
+         yaxis=list(title="Frequency Count"),
+         margin=list(b=300),xaxis = list(tickangle = 90))
+```
+<hr>  
+
+### No. of Protein Groups in Sample
+```{r SampleProteinGroups}
+plot_ly(x=rownames(count.data),y=rowSums(count.data[,-1]!=0),type="bar")%>%
+  layout(title="Histogram of No. of Protein Groups",
+    yaxis=list(title="Frequency Count"),     
+    margin=list(b=300),xaxis = list(tickangle = 90))
+```
+<hr>  
+
+### Sample Detail
+```{r Data}
+datatable(
+  data.frame(Sample=rownames(count.data),
+             Hit.Rate=count.data[,1],
+             Total.Spectrum.Count=rowSums(count.data[,-1]),
+             Non0.Count=rowSums(count.data[,-1]!=0)),
+  rownames=FALSE,
+  colnames=c("Sample Name","Hit Rate","Total Spectrum Amount", "No. of Protein Groups"),
+  options=list(dom="ltipr",
+               lengthMenu=c(5,10,sample.size))
+)
+```
+<hr>  
+
+### Sample Comparison
+```{r Compariason}
+fluidRow(
+  column(5,
+         selectInput(inputId="dropdown1",
+                     label="Sample 1",
+                     width=validateCssUnit("100%"),
+                     choices=rownames(count.data))),
+  column(5,
+         selectInput(inputId="dropdown2",
+                     label="Sample 2",
+                     width=validateCssUnit("100%"),
+                     choices=rownames(count.data)))
+)
+
+renderPlotly({
+  subplot(
+    plot_ly(
+      x = count.data[which(sample.names==input$dropdown1),-c(1,which(count.data[which(sample.names==input$dropdown1),]==0))],
+      type="histogram",name=input$dropdown1
+    )%>%
+      layout(
+        xaxis=list(title=input$dropdown1)
+      ),
+    plot_ly(
+      x = count.data[which(sample.names==input$dropdown2),-c(1,which(count.data[which(sample.names==input$dropdown2),]==0))],
+      type="histogram",name=input$dropdown2
+    )
+    %>%
+      layout(
+        xaxis=list(title=input$dropdown2)
+      ), titleX=TRUE
+  ,shareY = TRUE)%>%
+    layout(
+      yaxis=list(title="Frequency"),
+      title="Histograms of Protein Group Spectrum Counts in Samples",showlegend=FALSE
+    )
+})
+```

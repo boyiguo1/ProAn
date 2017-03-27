@@ -1,0 +1,181 @@
+---
+title: Summary Report
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+runtime: shiny
+---
+```{r setup&library, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(d3heatmap)
+```
+[overview.Rmd](overview.Rmd)  
+[filter.Rmd](filter.Rmd)  
+[analysis.Rmd](analysis.Rmd)  
+
+<hr>
+
+# Filter  
+```{r filter}
+fluidRow(
+  column(3,
+         numericInput("min.TSC",label="Minimum Total Spectrum Count",value=5)),
+  column(7,
+         renderText("The numeric input is to set up a threshold so that only protein groups whose total spectrum count is greater than this threshold will be included for following analysis."
+         )
+  )
+)
+
+```
+<hr>
+
+## Protein Group 
+### Confidence  
+```{r Confidence Histogram}
+# Confidence Level Hist
+renderPlotly({
+  plot_ly(
+    x=protein.data$Confidence.1...Local.False.Positive.Rate.[protein.data$Total.Spectrum.Count>input$min.TSC],
+    type="histogram",autobinx=FALSE,
+  xbins=list(start=0,end=1.05,size=0.05))%>%
+    layout(
+      title = "Histogram of Confidence Level of Protein Groups",
+      xaxis=list(title="Confidence Level",range=c(0,1.05)),
+      yaxis=list(title="Frequency Count")
+    )
+})
+```
+<hr>
+
+### Occurence 
+```{r Confidence}
+sliderInput("confi_threshold",label="Confidence Threshold",
+            min=0.5,max=1,value=0.8,step=0.05
+)
+renderPlotly({
+  above.indices <-which(protein.data$Confidence.1...Local.False.Positive.Rate.>=input$confi_threshold&
+                          protein.data$Total.Spectrum.Count>input$min.TSC)
+  below.indices <- which(protein.data$Confidence.1...Local.False.Positive.Rate.<input$confi_threshold&
+                           protein.data$Total.Spectrum.Count>input$min.TSC)
+  plot_ly(x=factor(protein.data$Occurrence[protein.data$Total.Spectrum.Count>input$min.TSC]),
+          name="All",type="histogram")%>%
+    add_histogram(
+      x=factor(protein.data[above.indices,]$Occurrence),
+      name=paste0("Confi >= ",input$confi_threshold))%>%
+    add_histogram(
+      x=factor(protein.data[below.indices,]$Occurrence),
+      name=paste0("Confi < ",input$confi_threshold))%>%
+    layout(
+      title = "Histogram of Protein Group Occurence",
+      xaxis=list(title="Occurrence"),
+      yaxis=list(title="Frequency Count")
+    )
+})
+```
+<hr>
+
+### Total Spectrum Count 
+```{r Protein Spectrum Count}
+renderPrint(summary(protein.data$Total.Spectrum.Count[protein.data$Total.Spectrum.Count>input$min.TSC]))
+renderPlotly({
+  plot_ly(x=log(protein.data$Total.Spectrum.Count[protein.data$Total.Spectrum.Count>input$min.TSC]),
+          type="histogram")%>%
+    layout(
+      title = "Histogram of Total Spectrum Counts of Protein Groups",
+      xaxis=list(title="Log(Total Spectrum Count)"),
+      yaxis=list(title="Frequency Count")
+    )
+})
+```
+<hr>
+
+## Sample
+```{r SampleSpectrumAmount}
+renderPlotly({
+  indices <- which(protein.data$Total.Spectrum.Count > input$min.TSC)+1 
+  plot_ly(
+  )%>%
+    add_markers(
+      x = count.data[,1],
+      y = rowSums(count.data[,indices]),
+      hoverinfo = "text", name="Spectrum",
+      text = ~paste("Hit Rate = ", count.data[,1],
+                    "\n Sample Spectrum Amount= ",
+                    rowSums(count.data[,indices]))
+    )%>%
+    add_markers(
+      x = count.data[,1],
+      y = rowSums(count.data[,indices]!=0),
+      name = "No. of Protein Groups",yaxis="y2",
+      hoverinfo = "text",
+      text = ~paste("Hit Rate = ", count.data[,1],"\n No. of Protein Groups= ", rowSums(count.data[,indices]!=0))
+    )%>%  
+    layout(
+      title = "Sample Spectrum Amount Vs Hit Rate",
+      xaxis=list(title="Hit Rate"),
+      yaxis=list(title="Sample Spectrum Amount"),
+      yaxis2=list(
+        tickfont = list(color = "red"),
+        overlaying = "y",
+        side = "right",
+        title = "No. of Protein Groups in Sample"
+      )
+    )
+})
+```
+<hr>
+
+### Sample Spectrum Amount
+```{r spectrum counts}
+plotlyOutput("Protein.Group",height=800)
+output$Protein.Group<-
+renderPlotly({
+  indices <- which(protein.data$Total.Spectrum.Count > input$min.TSC)+1 
+  plot_ly(x=rownames(count.data),y=rowSums(count.data[,indices]),type="bar")%>%
+    layout(title="Bar Chart of Sample Spectrum Amount",
+           yaxis=list(title="Spectrum Amount"),
+           margin=list(b=300),xaxis = list(tickangle = 90))
+})
+```
+<hr>  
+
+### No. of Protein Groups
+```{r Non-0 Counts}
+plotlyOutput("Non.Zero",height=800)
+output$Non.Zero<-
+renderPlotly({
+  indices <- which(protein.data$Total.Spectrum.Count > input$min.TSC)+1 
+  plot_ly(x=rownames(count.data),y=rowSums(count.data[,-1]!=0),type="bar")%>%
+    layout(title="Bar Chart of No. of Protein Groups in Samples",
+           yaxis=list(title="Frequency Count"),     
+           margin=list(b=300),xaxis = list(tickangle = 90))
+})
+```
+<hr>  
+
+### Heatmap
+```{r heatmap}
+## optional:
+## Use heatmaply, then the heatmap can be saved as picture
+
+checkboxInput("cluster","Apply clustering",value=T)
+checkboxInput("scale","Apply scaling",value=T)
+
+renderPrint({
+        cat("Sample: ", input$heatmap_click$row,"\n",
+          "Protein Groups: ",input$heatmap_click$col,"\n",
+          "Value: ", input$heatmap_click$label)
+    })
+d3heatmapOutput("heatmap")
+
+output$heatmap <- renderD3heatmap({
+  indices <- which(protein.data$Total.Spectrum.Count > input$min.TSC)+1 
+  d3heatmap(count.data[,indices],
+            scale=if(input$scale) "column" else "none",
+            dendrogram=if(input$cluster) "column" else "none",yaxis_font_size="5pt")
+})
+```

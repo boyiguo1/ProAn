@@ -1,0 +1,191 @@
+---
+title: Summary Report
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(shiny)
+library(energy)
+library(d3heatmap)
+library(DT)
+
+react <- reactiveValues()
+react$indices <- 1:(dim(count.data)[2])
+react$sig.indices <- 1:(dim(count.data)[2])
+react$sample.indices <- 1:nrow(count.data)
+```
+[overview.Rmd](overview.Rmd)  
+[filter.Rmd](filter.Rmd)  
+[analysis.Rmd](analysis.Rmd)  
+
+<hr>
+# Analysis
+## Filter  
+```{r filters}
+fluidRow(
+  column(3,
+         numericInput("min.TSC",label="Minimum Total Spectrum Count",value=5)),
+  column(7,
+         renderText("The numeric input is to set up a threshold so that only protein groups whose total spectrum count is greater than this threshold will be included for following analysis."
+         )
+  )
+)
+fluidRow(
+  column(3,
+         sliderInput("confi_threshold",label="Minimum Confidence Level",
+            min=0.5,max=1,value=0.8,step=0.05)),
+  column(7,
+         renderText("The slider input is to set up a threshold so that only protein groups whose confidence level is greater than this threshold will be included for following analysis."
+         )
+  )
+)
+fluidRow(
+  column(3,
+         numericInput("min.Occ",label="Minimum Occurrence",value=3,min=0,max=14)),
+  column(7,
+         renderText("The numeric input is to set up a threshold so that only protein groups whose occurrence is greater than this threshold will be included for following analysis."
+         )
+  )
+)
+fluidRow(
+  column(5,
+         selectInput("exclude","Samples to be exclude",choices=c(count.data[,1]),multiple=TRUE, selectize=FALSE)),
+  column(7,
+         renderText("Select the sample not qulified for analysis. Mutilple selection is allowed by press 'Ctrl' on keyboard. To deselect one entry, press 'Ctrl' and click the entry you want to deselect.")
+  )
+)
+```
+<hr>
+
+Samples Included in the Analysis:
+```{r SampleIncluded}
+renderPrint(sample.names[react$sample.indices])
+```
+
+## Screening Result
+```{r}
+dataTableOutput("result")
+output$result <- renderDataTable({
+  react$sample.indices <- setdiff(1:nrow(count.data),sapply(input$exclude,function(x){
+    return(which(x==count.data[,1]))
+  }))
+  
+  react$indices <- which(protein.data$Total.Spectrum.Count > input$min.TSC &
+                     protein.data$Confidence.1...Local.False.Positive.Rate.>=input$confi_threshold &
+                      protein.data$Occurrence >= input$min.Occ )+1
+  
+  SC.test.result <- t(sapply(react$indices,FUN=function(x){
+    test <- dcov.test(count.data[react$sample.indices,1],count.data[react$sample.indices,x],R=3000)
+    corr <- cor(count.data[react$sample.indices,1],count.data[react$sample.indices,x])
+    return(c(corr,test$estimate,test$p.value))
+  }))
+  colnames(SC.test.result) <- c("corr","dCov","p.value")
+  BH.p.value <- round(p.adjust(SC.test.result[,"p.value"],method="BH"),digits=3)
+  Bonf.p.value <- round(p.adjust(SC.test.result[,"p.value"],method="bonferroni"),digits=3)
+  meta.data <- protein.data[(react$indices-1),
+                            c("Defline",
+                              "Occurrence",
+                              "Confidence.1...Local.False.Positive.Rate.",
+                              "Total.Spectrum.Count")
+                            ]
+  react$sig.indices <- react$indices[SC.test.result[,"p.value"]<=input$max.p]
+
+  datatable(
+    data.frame(meta.data,round(SC.test.result,digits=3),BH.p.value,Bonf.p.value),
+    rownames = FALSE,
+    colnames=c("Protein Group","Occurence",
+               "Confidence","Total Spectrum Count",
+               "Correlation Coefficient",
+               "Distance Covariance","P Value",
+               "BH Adjusted P Value",
+               " Bonfferoni Adjusted P Value"),
+    selection="single"
+  )
+})
+```
+<hr>
+
+### Protein Group
+Please select the protein group to be observed in the screening result table(above) by clicking on the entry.
+```{r}
+plotlyOutput("Protein.Group",height=800)
+output$Protein.Group<-
+renderPlotly(
+  plot_ly(x = rownames(count.data)[react$sample.indices]
+    ,y=count.data[react$sample.indices,react$indices[ifelse(is.null(input$result_rows_selected),1,input$result_rows_selected)]],type="bar")%>%
+    layout(title=paste0("Bar Chart of ",
+                        colnames(count.data)[react$indices[ifelse(is.null(input$result_rows_selected),1,input$result_rows_selected)]]),
+           yaxis=list(title="Spectrum Count"),     
+           margin=list(b=300),xaxis = list(tickangle = 90)))
+```
+
+### Spectrum Count in Samples
+```{r}
+actionButton("show","Show Table")
+conditionalPanel(
+  condition = "input.show%2 == 1",
+dataTableOutput("dataTable")
+) 
+  
+  
+output$dataTable <- renderDataTable({
+  datatable(t(count.data[react$sample.indices,react$indices]),
+#            colnames=rownames(count.data)[react$sample.indices]
+colnames=paste0("S",react$sample.indices)
+  )
+})
+
+observeEvent(input$show,{
+  if(input$show%%2==0) {
+    updateActionButton(session, "show", label ="Show Table", icon = NULL)
+  }
+  else {
+    updateActionButton(session, "show", label ="Hide Table", icon = NULL)
+
+  }
+})
+
+
+```
+<hr>
+
+### Heatmap
+```{r}
+checkboxInput("cluster","Apply clustering",value=T)
+checkboxInput("scale","Apply column scaling",value=T)
+
+fluidRow(
+  column(3,
+         numericInput("max.p",label="Maximum P Value",value=0.05,min=0,max=1,step=0.01)),
+  column(7,
+         renderText("The numeric input is to set up a threshold so that only protein groups whose p-value is smaller than this threshold will be included in the heatmap below."
+         )
+  )
+)
+
+
+renderPrint({
+  if(is.null(input$heatmap_click$col)) cat("")
+  else{
+    cat("Sample: ", input$heatmap_click$row,"\n",
+        "Protein Groups: ",grep(input$heatmap_click$col,colnames(count.data)[react$sig.indices],value=T),"\n",
+        "Value: ",input$heatmap_click$label)}
+})
+d3heatmapOutput("heatmap")
+
+output$heatmap <- renderD3heatmap(
+d3heatmap(count.data[react$sample.indices,react$sig.indices],
+            scale=if(input$scale) "column" else "none",
+            dendrogram=if(input$cluster) "column" else "none",
+            labCol=substr(colnames(count.data)[react$sig.indices],9,14)
+)
+)
+```
